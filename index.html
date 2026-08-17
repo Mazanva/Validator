@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PS4 Video Validátor (MediaInfo Engine)</title>
+    <!-- Oficiální MediaInfo.js knihovna -->
+    <script src="https://unpkg.com/mediainfo.js@0.3.3/dist/mediainfo.min.js"></script>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card-bg: #1e293b;
+            --accent: #0070d1;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --success: #22c55e;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 2rem;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container { max-width: 860px; width: 100%; }
+        h1 { text-align: center; margin-bottom: 0.5rem; font-size: 1.8rem; }
+        p.subtitle { text-align: center; color: var(--text-muted); margin-bottom: 2rem; }
+
+        .dropzone {
+            border: 2px dashed #334155;
+            border-radius: 12px;
+            padding: 3rem 2rem;
+            text-align: center;
+            background-color: var(--card-bg);
+            cursor: pointer;
+            transition: border-color 0.2s, background-color 0.2s;
+        }
+
+        .dropzone:hover, .dropzone.dragover {
+            border-color: var(--accent);
+            background-color: #26334d;
+        }
+
+        .result-card {
+            margin-top: 1.5rem;
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 1.5rem;
+            display: none;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.35rem 0.75rem;
+            border-radius: 9999px;
+            font-weight: 700;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+        }
+
+        .badge.pass { background: rgba(34, 197, 94, 0.2); color: var(--success); }
+        .badge.fail { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
+        .badge.loading { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 1rem;
+            margin: 1rem 0;
+            padding: 1rem;
+            background: rgba(0,0,0,0.2);
+            border-radius: 8px;
+        }
+
+        .info-item label { display: block; font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; }
+        .info-item span { font-weight: 600; font-size: 0.95rem; }
+
+        ul.issues { padding-left: 1.25rem; color: var(--danger); }
+        ul.issues li { margin-bottom: 0.5rem; }
+
+        .fix-box {
+            background: #0f172a;
+            border-left: 4px solid var(--accent);
+            padding: 1rem;
+            border-radius: 4px;
+            margin-top: 1rem;
+            font-family: monospace;
+            font-size: 0.85rem;
+            word-break: break-all;
+            user-select: all;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>PlayStation 4 Video Validátor</h1>
+    <p class="subtitle">Přetáhněte libovolný film pro analýzu kompatibility přes MediaInfo Engine</p>
+
+    <div class="dropzone" id="dropzone">
+        <p><strong>Klikněte nebo přetáhněte film sem</strong></p>
+        <span style="color: var(--text-muted); font-size: 0.85rem;">Podpora všech formátů (MKV, MP4, AVI, MOV, WMV, FLV...)</span>
+        <input type="file" id="fileInput" style="display:none" accept="video/*,.mkv,.mp4,.avi,.mov,.wmv,.m4v,.flv">
+    </div>
+
+    <div class="result-card" id="resultCard">
+        <div id="statusBadge" class="badge"></div>
+        <h2 id="fileName" style="margin: 0 0 0.5rem 0; font-size: 1.2rem;"></h2>
+
+        <div class="info-grid">
+            <div class="info-item"><label>Kontejner</label><span id="infoContainer">-</span></div>
+            <div class="info-item"><label>Délka videa</label><span id="infoDuration" style="color: #38bdf8;">-</span></div>
+            <div class="info-item"><label>Rozlišení</label><span id="infoRes" style="color: #22c55e;">-</span></div>
+            <div class="info-item"><label>Video Kodek</label><span id="infoCodec">-</span></div>
+            <div class="info-item"><label>Snímky (FPS)</label><span id="infoFps" style="color: #38bdf8;">-</span></div>
+            <div class="info-item"><label>Zvukové Stopy</label><span id="infoAudio">-</span></div>
+        </div>
+
+        <div id="issuesSection" style="display: none;">
+            <h3 style="font-size: 1rem; color: var(--danger); margin-bottom: 0.5rem;">Zjištěné problémy s PS4:</h3>
+            <ul id="issuesList" class="issues"></ul>
+            
+            <h3 style="font-size: 1rem; margin-top: 1rem; margin-bottom: 0.5rem;">Příkaz pro opravu přes FFmpeg:</h3>
+            <div class="fix-box" id="ffmpegCmd"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    let mediainfoFactory = null;
+
+    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropzone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) processFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length) processFile(e.target.files[0]);
+    });
+
+    function formatDuration(seconds) {
+        if (!seconds || isNaN(seconds) || seconds <= 0) return 'Nezjištěno';
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = Math.floor(seconds % 60);
+        const pad = (n) => String(n).padStart(2, '0');
+        return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+    }
+
+    async function processFile(file) {
+        const resultCard = document.getElementById('resultCard');
+        const statusBadge = document.getElementById('statusBadge');
+        
+        resultCard.style.display = 'block';
+        statusBadge.className = 'badge loading';
+        statusBadge.innerText = 'ANALÝZA POMOCÍ MEDIAINFO...';
+        document.getElementById('fileName').innerText = file.name;
+
+        try {
+            if (!mediainfoFactory) {
+                mediainfoFactory = await MediaInfo({ format: 'object' });
+            }
+
+            const readChunk = (chunkSize, offset) =>
+                new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(new Uint8Array(e.target.result));
+                    reader.onerror = (e) => reject(e.target.error);
+                    reader.readAsArrayBuffer(file.slice(offset, offset + chunkSize));
+                });
+
+            const result = await mediainfoFactory.analyzeData(() => file.size, readChunk);
+            parseAndDisplay(file.name, result);
+        } catch (err) {
+            console.error("MediaInfo Error:", err);
+            statusBadge.className = 'badge fail';
+            statusBadge.innerText = 'CHYBA: SOUBOR NELZE OTEVŘÍT PŘÍMO Z DISKU (file:///)';
+            alert("UPOZORNĚNÍ: Prohlížeč blokuje WebAssembly při otevírání souboru přímo z disku.\n\nSpusťte kód přes lokální server (např. VS Code Live Server nebo Python http.server).");
+        }
+    }
+
+    function parseAndDisplay(filename, miData) {
+        const tracks = miData.media.track;
+        const generalTrack = tracks.find(t => t['@type'] === 'General') || {};
+        const videoTrack = tracks.find(t => t['@type'] === 'Video') || {};
+        const audioTracks = tracks.filter(t => t['@type'] === 'Audio');
+
+        // Extrakt základních dat
+        const container = generalTrack.Format || filename.split('.').pop().toUpperCase();
+        let durationSec = parseFloat(generalTrack.Duration) || parseFloat(videoTrack.Duration) || 0;
+
+        const width = parseInt(videoTrack.Width, 10) || 0;
+        const height = parseInt(videoTrack.Height, 10) || 0;
+        const videoFormat = videoTrack.Format || 'Neznámý';
+        const videoProfile = videoTrack.Format_Profile || '';
+        const fps = parseFloat(videoTrack.FrameRate) || 0;
+        const bitDepth = parseInt(videoTrack.BitDepth, 10) || 8;
+
+        // Rozlišení
+        let resText = "Nezjištěno";
+        let resColor = "#94a3b8";
+        if (width > 0 && height > 0) {
+            if (width >= 3800 || height >= 2000) { resText = `${width} × ${height} (4K / UHD)`; resColor = "#a855f7"; }
+            else if (width >= 1800 || height >= 800) { resText = `${width} × ${height} (FULL HD)`; resColor = "#22c55e"; }
+            else if (width >= 1200 || height >= 500) { resText = `${width} × ${height} (HD 720p)`; resColor = "#f59e0b"; }
+            else { resText = `${width} × ${height} (SD)`; resColor = "#ef4444"; }
+        }
+
+        // Zvukové stopy
+        const parsedAudio = audioTracks.map((t, idx) => {
+            const codec = t.Format || 'Neznámý';
+            const profile = t.Format_Commercial_IfAny || t.Format_Profile || '';
+            const fullCodec = profile ? `${codec} (${profile})` : codec;
+            
+            let isOk = true;
+            let note = "";
+
+            if (codec.includes('E-AC-3')) {
+                isOk = false;
+                note = "PS4 neumí E-AC-3 (Dolby Digital Plus) z USB drive.";
+            } else if (codec.includes('DTS') && !['MKV', 'Matroska'].includes(container)) {
+                isOk = false;
+                note = "DTS je podporováno pouze v kontejneru MKV.";
+            }
+
+            return { num: idx + 1, codec: fullCodec, isOk, note };
+        });
+
+        // Vykreslení
+        document.getElementById('infoContainer').innerText = container;
+        document.getElementById('infoDuration').innerText = formatDuration(durationSec);
+        document.getElementById('infoCodec').innerText = `${videoFormat} ${videoProfile ? '(' + videoProfile + ')' : ''}`;
+        document.getElementById('infoFps').innerText = fps > 0 ? `${fps.toFixed(2)} FPS` : 'Nezjištěno';
+        
+        const resEl = document.getElementById('infoRes');
+        resEl.innerText = resText;
+        resEl.style.color = resColor;
+
+        if (parsedAudio.length > 0) {
+            document.getElementById('infoAudio').innerText = parsedAudio.map(a => `#${a.num}: ${a.codec}`).join(' | ');
+        } else {
+            document.getElementById('infoAudio').innerText = 'Bez zvuku / Nezjištěno';
+        }
+
+        // Validace pro PS4
+        const issues = [];
+        let needsVideoReencode = false;
+        let needsScale = false;
+
+        const validContainers = ['MPEG-4', 'MP4', 'Matroska', 'MKV', 'AVI'];
+        if (!validContainers.some(c => container.toUpperCase().includes(c))) {
+            issues.push(`<b>Formát kontejneru (${container}):</b> PS4 tento typ nepodporuje.`);
+        }
+
+        if (container.toUpperCase().includes('AVI')) {
+            issues.push('<b>Formát AVI:</b> Soubory AVI na PS4 často selhávají kvůli zastaralým kodekům (XviD/DivX).');
+            needsVideoReencode = true;
+        }
+
+        if (width > 1920 || height > 1080) {
+            issues.push(`<b>Rozlišení (${width}x${height}):</b> PS4 neakceptuje videa s rozlišením vyšším než 1080p.`);
+            needsVideoReencode = true;
+            needsScale = true;
+        }
+
+        if (videoFormat.includes('HEVC') || videoFormat.includes('H.265')) {
+            issues.push('<b>Video kodek (H.265 / HEVC):</b> PlayStation 4 nemá HW dekodér pro H.265.');
+            needsVideoReencode = true;
+        } else if (videoFormat.includes('AV1') || videoFormat.includes('VP9')) {
+            issues.push(`<b>Video kodek (${videoFormat}):</b> PS4 neumí přehrát tento webový kodek.`);
+            needsVideoReencode = true;
+        }
+
+        if (bitDepth > 8) {
+            issues.push(`<b>Barevná hloubka (${bitDepth}-bit):</b> PS4 přehraje pouze 8-bitový profil H.264.`);
+            needsVideoReencode = true;
+        }
+
+        parsedAudio.forEach(a => {
+            if (!a.isOk) issues.push(`<b>Zvuková stopa č. ${a.num} (${a.codec}):</b> ${a.note}`);
+        });
+
+        const statusBadge = document.getElementById('statusBadge');
+        const issuesSection = document.getElementById('issuesSection');
+
+        if (issues.length === 0) {
+            statusBadge.className = 'badge pass';
+            statusBadge.innerText = '✓ PS4 PŘEHRAJE TENTO SOUBOR BEZ PROBLÉMŮ';
+            issuesSection.style.display = 'none';
+        } else {
+            statusBadge.className = 'badge fail';
+            statusBadge.innerText = '✕ SOUBOR NENÍ KOMPATIBILNÍ S PS4';
+            document.getElementById('issuesList').innerHTML = issues.map(i => `<li>${i}</li>`).join('');
+
+            let cmd = `ffmpeg -i "${filename}" `;
+            if (needsVideoReencode) {
+                cmd += '-c:v libx264 -pix_fmt yuv420p -profile:v high -level 4.1 ';
+                if (needsScale) cmd += '-vf scale=1920:-2 ';
+                cmd += '-preset fast -crf 18 ';
+            } else {
+                cmd += '-c:v copy ';
+            }
+
+            parsedAudio.forEach((a, idx) => {
+                if (a.isOk) cmd += `-c:a:${idx} copy `;
+                else cmd += `-c:a:${idx} ac3 -b:a:${idx} 640k `;
+            });
+
+            if (parsedAudio.length === 0) cmd += '-c:a copy ';
+
+            cmd += '-movflags +faststart ';
+            const cleanName = filename.replace(/\.[^/.]+$/, "");
+            cmd += `"${cleanName}_PS4.mp4"`;
+
+            document.getElementById('ffmpegCmd').innerText = cmd;
+            issuesSection.style.display = 'block';
+        }
+    }
+</script>
+
+</body>
+</html>
