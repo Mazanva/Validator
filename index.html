@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PS4 Video Validátor (MediaInfo Engine)</title>
-    <!-- Oficiální MediaInfo.js knihovna -->
+    <title>PS4 Video Validátor</title>
     <script src="https://unpkg.com/mediainfo.js@0.3.3/dist/mediainfo.min.js"></script>
     <style>
         :root {
@@ -101,11 +100,11 @@
 
 <div class="container">
     <h1>PlayStation 4 Video Validátor</h1>
-    <p class="subtitle">Přetáhněte libovolný film pro analýzu kompatibility přes MediaInfo Engine</p>
+    <p class="subtitle">Přetáhněte film pro rychlou analýzu kompatibility</p>
 
     <div class="dropzone" id="dropzone">
         <p><strong>Klikněte nebo přetáhněte film sem</strong></p>
-        <span style="color: var(--text-muted); font-size: 0.85rem;">Podpora všech formátů (MKV, MP4, AVI, MOV, WMV, FLV...)</span>
+        <span style="color: var(--text-muted); font-size: 0.85rem;">Podpora MKV, MP4, AVI, MOV, WMV, M4V...</span>
         <input type="file" id="fileInput" style="display:none" accept="video/*,.mkv,.mp4,.avi,.mov,.wmv,.m4v,.flv">
     </div>
 
@@ -132,7 +131,6 @@
     </div>
 </div>
 
-<script src="https://unpkg.com/mediainfo.js@0.3.3/dist/mediainfo.min.js"></script>
 <script>
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('fileInput');
@@ -152,6 +150,8 @@
 
     function formatDuration(seconds) {
         if (!seconds || isNaN(seconds) || seconds <= 0) return 'Nezjištěno';
+        if (seconds > 100000) seconds = seconds / 1000;
+        
         const h = Math.floor(seconds / 3600);
         const m = Math.floor((seconds % 3600) / 60);
         const s = Math.floor(seconds % 60);
@@ -159,7 +159,6 @@
         return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
     }
 
-    // Inicializace MediaInfo s natvrdo nastavenou CDN cestou k WASM
     async function getMediaInfo() {
         if (!mediainfoInstance) {
             mediainfoInstance = await MediaInfo({
@@ -190,21 +189,28 @@
             const readChunk = (chunkSize, offset) =>
                 new Promise((resolve, reject) => {
                     const reader = new FileReader();
-                    reader.onload = (e) => resolve(new Uint8Array(e.target.result));
-                    reader.onerror = (e) => reject(e.target.error);
+                    reader.onload = (e) => {
+                        if (e.target.error) reject(e.target.error);
+                        else resolve(new Uint8Array(e.target.result));
+                    };
+                    reader.onerror = (err) => reject(err);
                     reader.readAsArrayBuffer(file.slice(offset, offset + chunkSize));
                 });
 
             const result = await mi.analyzeData(() => file.size, readChunk);
             parseAndDisplay(file.name, result);
         } catch (err) {
-            console.error("MediaInfo Error:", err);
+            console.error("Detailní chyba:", err);
             statusBadge.className = 'badge fail';
-            statusBadge.innerText = 'CHYBA PŘI ANALYSIS MEDIÍ';
+            statusBadge.innerText = 'CHYBA PŘI ANALÝZE SOUBORU';
         }
     }
 
     function parseAndDisplay(filename, miData) {
+        if (!miData || !miData.media || !miData.media.track) {
+            throw new Error("Neplatná struktura dat z MediaInfo");
+        }
+
         const tracks = miData.media.track;
         const generalTrack = tracks.find(t => t['@type'] === 'General') || {};
         const videoTrack = tracks.find(t => t['@type'] === 'Video') || {};
