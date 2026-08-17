@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PS4 Video Validátor</title>
-    <script src="https://unpkg.com/mediainfo.js@0.3.3/dist/mediainfo.min.js"></script>
+    <!-- Použití CDN skriptu pro MediaInfo.js -->
+    <script src="https://cdn.jsdelivr.net/npm/mediainfo.js@0.2.1/dist/mediainfo.min.js"></script>
     <style>
         :root {
             --bg: #0f172a;
@@ -159,19 +160,19 @@
         return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
     }
 
-    async function getMediaInfo() {
-        if (!mediainfoInstance) {
-            mediainfoInstance = await MediaInfo({
+    // Bezpečné načtení MediaInfo knihovny s explicitní cestou k WASM
+    function initMediaInfo() {
+        return new Promise((resolve, reject) => {
+            if (mediainfoInstance) return resolve(mediainfoInstance);
+
+            MediaInfo({
                 format: 'object',
-                locateFile: (path) => {
-                    if (path.endsWith('.wasm')) {
-                        return 'https://unpkg.com/mediainfo.js@0.3.3/dist/mediainfo.wasm';
-                    }
-                    return path;
-                }
-            });
-        }
-        return mediainfoInstance;
+                locateFile: (path) => `https://cdn.jsdelivr.net/npm/mediainfo.js@0.2.1/dist/${path}`
+            }, (mi) => {
+                mediainfoInstance = mi;
+                resolve(mi);
+            }, (err) => reject(err));
+        });
     }
 
     async function processFile(file) {
@@ -184,15 +185,12 @@
         document.getElementById('fileName').innerText = file.name;
 
         try {
-            const mi = await getMediaInfo();
+            const mi = await initMediaInfo();
 
             const readChunk = (chunkSize, offset) =>
                 new Promise((resolve, reject) => {
                     const reader = new FileReader();
-                    reader.onload = (e) => {
-                        if (e.target.error) reject(e.target.error);
-                        else resolve(new Uint8Array(e.target.result));
-                    };
+                    reader.onload = (e) => resolve(new Uint8Array(e.target.result));
                     reader.onerror = (err) => reject(err);
                     reader.readAsArrayBuffer(file.slice(offset, offset + chunkSize));
                 });
@@ -200,15 +198,15 @@
             const result = await mi.analyzeData(() => file.size, readChunk);
             parseAndDisplay(file.name, result);
         } catch (err) {
-            console.error("Detailní chyba:", err);
+            console.error("Detailní chyba MediaInfo:", err);
             statusBadge.className = 'badge fail';
-            statusBadge.innerText = 'CHYBA PŘI ANALÝZE SOUBORU';
+            statusBadge.innerText = 'CHYBA PŘI ANALÝZE (Otevřete F12 Console)';
         }
     }
 
     function parseAndDisplay(filename, miData) {
         if (!miData || !miData.media || !miData.media.track) {
-            throw new Error("Neplatná struktura dat z MediaInfo");
+            throw new Error("Složka stopy nebyla v odpovědi nalezena");
         }
 
         const tracks = miData.media.track;
