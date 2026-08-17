@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PS4 Video Validátor</title>
-    <!-- Použití CDN skriptu pro MediaInfo.js -->
-    <script src="https://cdn.jsdelivr.net/npm/mediainfo.js@0.2.1/dist/mediainfo.min.js"></script>
+    <!-- Oficiální oficiální ESM/JS skript verze 0.3.3 -->
+    <script src="https://cdn.jsdelivr.net/npm/mediainfo.js@0.3.3/dist/mediainfo.min.js"></script>
     <style>
         :root {
             --bg: #0f172a;
@@ -135,7 +135,7 @@
 <script>
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('fileInput');
-    let mediainfoInstance = null;
+    let mediainfoFactory = null;
 
     dropzone.addEventListener('click', () => fileInput.click());
     dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
@@ -160,21 +160,6 @@
         return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
     }
 
-    // Bezpečné načtení MediaInfo knihovny s explicitní cestou k WASM
-    function initMediaInfo() {
-        return new Promise((resolve, reject) => {
-            if (mediainfoInstance) return resolve(mediainfoInstance);
-
-            MediaInfo({
-                format: 'object',
-                locateFile: (path) => `https://cdn.jsdelivr.net/npm/mediainfo.js@0.2.1/dist/${path}`
-            }, (mi) => {
-                mediainfoInstance = mi;
-                resolve(mi);
-            }, (err) => reject(err));
-        });
-    }
-
     async function processFile(file) {
         const resultCard = document.getElementById('resultCard');
         const statusBadge = document.getElementById('statusBadge');
@@ -185,28 +170,34 @@
         document.getElementById('fileName').innerText = file.name;
 
         try {
-            const mi = await initMediaInfo();
+            // Správná inicializace MediaInfo 0.3.3 přes CDN
+            if (!mediainfoFactory) {
+                mediainfoFactory = await MediaInfo({
+                    format: 'object',
+                    locateFile: (path) => `https://cdn.jsdelivr.net/npm/mediainfo.js@0.3.3/dist/${path}`
+                });
+            }
 
-            const readChunk = (chunkSize, offset) =>
+            const makeReadChunk = (fileToRead) => (chunkSize, offset) =>
                 new Promise((resolve, reject) => {
                     const reader = new FileReader();
                     reader.onload = (e) => resolve(new Uint8Array(e.target.result));
                     reader.onerror = (err) => reject(err);
-                    reader.readAsArrayBuffer(file.slice(offset, offset + chunkSize));
+                    reader.readAsArrayBuffer(fileToRead.slice(offset, offset + chunkSize));
                 });
 
-            const result = await mi.analyzeData(() => file.size, readChunk);
+            const result = await mediainfoFactory.analyzeData(file.size, makeReadChunk(file));
             parseAndDisplay(file.name, result);
         } catch (err) {
-            console.error("Detailní chyba MediaInfo:", err);
+            console.error(err);
             statusBadge.className = 'badge fail';
-            statusBadge.innerText = 'CHYBA PŘI ANALÝZE (Otevřete F12 Console)';
+            statusBadge.innerText = 'NEPODPOROVANÝ SOUPIS NEBO POŠKOZENÝ SOUBOR';
         }
     }
 
     function parseAndDisplay(filename, miData) {
         if (!miData || !miData.media || !miData.media.track) {
-            throw new Error("Složka stopy nebyla v odpovědi nalezena");
+            throw new Error("Chyba v datové struktuře");
         }
 
         const tracks = miData.media.track;
